@@ -109,7 +109,7 @@
 			base.MaximizeBox = false;
 			base.Name = "MainForm";
 			base.StartPosition = global::System.Windows.Forms.FormStartPosition.CenterScreen;
-			this.Text = "CanetisRadar (by Samuel Tulach, Philipp Ensinger)";
+			this.Text = "CanetisRadar Ultra (by Samuel Tulach, Philipp Ensinger, Brandon Ryan)";
 			base.Load += new global::System.EventHandler(this.MainForm_Load);
 			this.groupBox1.ResumeLayout(false);
 			this.groupBox3.ResumeLayout(false);
