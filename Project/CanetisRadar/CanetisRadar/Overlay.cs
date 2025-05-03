@@ -44,6 +44,11 @@ namespace CanetisRadar
 			base.Opacity = 0.7;
 			FileIniDataParser parser = new FileIniDataParser();
 			IniData data = parser.ReadFile(AppDomain.CurrentDomain.BaseDirectory + "settings.ini");
+			string sensitivityRaw = data["basic"]["sensitivity"];
+			if (float.TryParse(sensitivityRaw, out float parsedSensitivity))
+			{
+				_sensitivity = Math.Max(0.1f, Math.Min(5.0f, parsedSensitivity));
+			}
 			this._multiplier = int.Parse(data["basic"]["multiplier"]);
 			this._updateRate = int.Parse(data["basic"]["updateRate"]);
 			this._delay = int.Parse(data["basic"]["delay"]);
@@ -100,7 +105,7 @@ namespace CanetisRadar
 					float value = peaks[channelIndex];
 					if (value < threshold) return; // Skip drawing if too quiet
 
-					float scaled = value * _multiplier;
+					float scaled = value * _sensitivity; // Use actual audio meter value (0.0 to 1.0)
 					Brush color = scaled < 0.33f ? Brushes.Green :
 								  scaled < 0.66f ? Brushes.Yellow : Brushes.Red;
 
@@ -183,6 +188,8 @@ namespace CanetisRadar
 
 		// Token: 0x0400000E RID: 14
 		private int _updateRate = 50;
+
+		private float _sensitivity = 0.5f;  // Default value
 
 		// Highlighting Duration in Seconds
 		private int _highlightDurationSeconds = 3;
