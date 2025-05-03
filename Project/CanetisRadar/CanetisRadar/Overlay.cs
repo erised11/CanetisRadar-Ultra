@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.Runtime.InteropServices;
@@ -33,13 +33,16 @@ namespace CanetisRadar
 		// Token: 0x0600000B RID: 11 RVA: 0x000027BC File Offset: 0x000009BC
 		private void Overlay_Load(object sender, EventArgs e)
 		{
+			int width = Screen.PrimaryScreen.Bounds.Width;
+			int height = Screen.PrimaryScreen.Bounds.Height;
+			_overlayBitmap = new Bitmap(width, height);
+			_overlayGraphics = Graphics.FromImage(_overlayBitmap);
 			base.TransparencyKey = Color.Turquoise;
 			this.BackColor = Color.Turquoise;
 			this.FormBorderStyle = FormBorderStyle.None;
 			int initialStyle = Overlay.GetWindowLong(base.Handle, -20);
 			Overlay.SetWindowLong(base.Handle, -20, initialStyle | 524288 | 32);
 			base.WindowState = FormWindowState.Maximized;
-			_radar = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
 			base.TopMost = true;
 			base.Opacity = 0.7;
 			FileIniDataParser parser = new FileIniDataParser();
@@ -49,11 +52,9 @@ namespace CanetisRadar
 			{
 				_sensitivity = Math.Max(0.1f, Math.Min(5.0f, parsedSensitivity));
 			}
-			this._multiplier = int.Parse(data["basic"]["multiplier"]);
 			this._updateRate = int.Parse(data["basic"]["updateRate"]);
 			this._delay = int.Parse(data["basic"]["delay"]);
 			this._highlightDurationSeconds = int.Parse(data["sectionHighlights"]["highlightDurationSeconds"]);
-			this._highlightSoundThreshold = int.Parse(data["sectionHighlights"]["highlightSoundThreshold"]);
 			Thread t = new Thread(new ThreadStart(this.Loop));
 			t.Start();
 		}
@@ -89,57 +90,49 @@ namespace CanetisRadar
 			int barThickness = 10;
 			int topBarWidth = width / 3;
 
-			// Create fresh overlay every frame (this clears previous content)
-			Bitmap fullOverlay = new Bitmap(width, height);
-			using (Graphics fullGrp = Graphics.FromImage(fullOverlay))
+			lock (_graphicsLock)
 			{
-				fullGrp.Clear(Color.Transparent); // Force clearing old bars
-
-				// Channel index reference:
-				// 0: Front Left, 1: Front Right, 2: Center, 3: LFE, 4: Rear Left, 5: Rear Right, 6: Side Left, 7: Side Right
+				_overlayGraphics.Clear(Color.Transparent);
 
 				Action<int, Rectangle> drawBarIfActive = (channelIndex, rect) =>
 				{
 					if (channelIndex >= peaks.Count) return;
 
 					float value = peaks[channelIndex];
-					if (value < threshold) return; // Skip drawing if too quiet
+					if (value < threshold) return;
 
-					float scaled = value * _sensitivity; // Use actual audio meter value (0.0 to 1.0)
+					float scaled = value * _sensitivity;
 					Brush color = scaled < 0.33f ? Brushes.Green :
 								  scaled < 0.66f ? Brushes.Yellow : Brushes.Red;
 
-					fullGrp.FillRectangle(color, rect);
+					_overlayGraphics.FillRectangle(color, rect);
 				};
 
-				// FRONT LEFT – top left
-				drawBarIfActive(0, new Rectangle(0, 0, topBarWidth, barThickness));
-
-				// FRONT RIGHT – top right
-				drawBarIfActive(1, new Rectangle(topBarWidth * 2, 0, topBarWidth, barThickness));
-
-				// CENTER – top center
-				drawBarIfActive(2, new Rectangle(topBarWidth, 0, topBarWidth, barThickness));
-
-				// SIDE LEFT – full height
-				drawBarIfActive(6, new Rectangle(0, 0, barThickness, height));
-
-				// SIDE RIGHT – full height
-				drawBarIfActive(7, new Rectangle(width - barThickness, 0, barThickness, height));
-
-				// REAR LEFT – bottom left
-				drawBarIfActive(4, new Rectangle(0, height - barThickness, width / 2, barThickness));
-
-				// REAR RIGHT – bottom right
-				drawBarIfActive(5, new Rectangle(width / 2, height - barThickness, width / 2, barThickness));
+				drawBarIfActive(0, new Rectangle(0, 0, topBarWidth, barThickness));                        // Front Left
+				drawBarIfActive(1, new Rectangle(topBarWidth * 2, 0, topBarWidth, barThickness));          // Front Right
+				drawBarIfActive(2, new Rectangle(topBarWidth, 0, topBarWidth, barThickness));              // Center
+				drawBarIfActive(6, new Rectangle(0, 0, barThickness, height));                             // Side Left
+				drawBarIfActive(7, new Rectangle(width - barThickness, 0, barThickness, height));          // Side Right
+				drawBarIfActive(4, new Rectangle(0, height - barThickness, width / 2, barThickness));      // Rear Left
+				drawBarIfActive(5, new Rectangle(width / 2, height - barThickness, width / 2, barThickness)); // Rear Right
 			}
 
-			// Set the rendered image to the UI
+			// Update the overlay image
 			this.Invoke(new MethodInvoker(() =>
 			{
-				this.BackgroundImage = fullOverlay;
-				this.BackgroundImageLayout = ImageLayout.Stretch;
+				lock (_graphicsLock)
+				{
+					this.BackgroundImage?.Dispose();  // Dispose old image to free memory
+					this.BackgroundImage = (Bitmap)_overlayBitmap.Clone();  // Clone to avoid cross-thread use
+					this.BackgroundImageLayout = ImageLayout.Stretch;
+				}
 			}));
+		}
+		protected override void OnFormClosing(FormClosingEventArgs e)
+		{
+			_overlayGraphics?.Dispose();
+			_overlayBitmap?.Dispose();
+			base.OnFormClosing(e);
 		}
 
 		// Token: 0x0400000B RID: 11
@@ -159,14 +152,14 @@ namespace CanetisRadar
 		// Highlighting Duration in Seconds
 		private int _highlightDurationSeconds = 3;
 
-		// Highlighting SoundThreshold
-		private int _highlightSoundThreshold = 50;
 
 		//Delay Time for visuals
 		private int _delay = 5;
 
 		// Token: 0x0400000F RID: 15
-		private Bitmap _radar;
+		private Bitmap _overlayBitmap;
+		private Graphics _overlayGraphics;
+		private readonly object _graphicsLock = new object();
 
 		// Token: 0x04000010 RID: 16
 		public IntPtr ParentHandle;
