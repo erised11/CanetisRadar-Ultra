@@ -35,9 +35,11 @@ namespace CanetisRadar
 		{
 			base.TransparencyKey = Color.Turquoise;
 			this.BackColor = Color.Turquoise;
+			this.FormBorderStyle = FormBorderStyle.None;
 			int initialStyle = Overlay.GetWindowLong(base.Handle, -20);
 			Overlay.SetWindowLong(base.Handle, -20, initialStyle | 524288 | 32);
 			base.WindowState = FormWindowState.Maximized;
+			_radar = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
 			base.TopMost = true;
 			base.Opacity = 0.7;
 			FileIniDataParser parser = new FileIniDataParser();
@@ -45,7 +47,6 @@ namespace CanetisRadar
 			this._multiplier = int.Parse(data["basic"]["multiplier"]);
 			this._updateRate = int.Parse(data["basic"]["updateRate"]);
 			this._delay = int.Parse(data["basic"]["delay"]);
-			this._sectionAmount = int.Parse(data["sectionHighlights"]["sectionAmount"]);
 			this._highlightDurationSeconds = int.Parse(data["sectionHighlights"]["highlightDurationSeconds"]);
 			this._highlightSoundThreshold = int.Parse(data["sectionHighlights"]["highlightSoundThreshold"]);
 			Thread t = new Thread(new ThreadStart(this.Loop));
@@ -57,151 +58,85 @@ namespace CanetisRadar
 		{
 			this._enumerator = new MMDeviceEnumerator();
 			this._device = this._enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console);
-			bool flag = this._device.AudioMeterInformation.PeakValues.Count < 8;
-			if (flag)
+
+			if (this._device.AudioMeterInformation.PeakValues.Count < 8)
 			{
 				MessageBox.Show("You are not using 7.1 audio device! Please look again at setup guide.", "No 7.1 audio detected!", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 				Environment.Exit(-1);
 			}
 
-			const int history = 100;
-			float[] leftTop = new float[history];
-			float[] rightTop = new float[history];
-			float[] leftBottom = new float[history];
-			float[] rightBottom = new float[history];
-			float[] left = new float[history];
-			float[] right = new float[history];
-
-			int idx = 0;
-
-			Graphics grp = Graphics.FromImage(this._radar);
-			grp.FillRectangle(Brushes.Black, 0, 0, this._radar.Width, this._radar.Height);
-
-			for (;;)
+			while (true)
 			{
-				leftTop[idx] = this._device.AudioMeterInformation.PeakValues[0];
-				rightTop[idx] = this._device.AudioMeterInformation.PeakValues[1];
-				leftBottom[idx] = this._device.AudioMeterInformation.PeakValues[4];
-				rightBottom[idx] = this._device.AudioMeterInformation.PeakValues[5];
-				left[idx] = this._device.AudioMeterInformation.PeakValues[6];
-				right[idx] = this._device.AudioMeterInformation.PeakValues[7];
-				idx = (idx + 1) % 100;
-
-
-				float tempOne = leftTop[(idx + (history - this._delay)) % history] * (float)this._multiplier;
-				float tempTwo = rightTop[(idx + (history - this._delay)) % history] * (float)this._multiplier;
-				float tempThree = leftBottom[(idx + (history - this._delay)) % history] * (float)this._multiplier;
-				float tempFour = rightBottom[(idx + (history - this._delay)) % history] * (float)this._multiplier;
-				float tempFive = left[(idx + (history - this._delay)) % history] * (float)this._multiplier;
-				float tempSix = right[(idx + (history - this._delay)) % history] * (float)this._multiplier;
-
-
-				float x = 75f - tempOne + tempTwo - tempFive + tempSix;
-				float y = 75f - tempOne - tempTwo;
-				x = x - tempThree + tempFour;
-				y = y + tempThree + tempFour;
-				bool flag2 = y < 10f;
-				if (flag2)
-				{
-					y = 10f;
-				}
-				bool flag3 = x < 10f;
-				if (flag3)
-				{
-					x = 10f;
-				}
-				bool flag4 = y > 140f;
-				if (flag4)
-				{
-					y = 140f;
-				}
-				bool flag5 = x > 140f;
-				if (flag5)
-				{
-					x = 140f;
-				}
-				//this.CreateRadar((int)x, (int)y, (int)idx);
-				this.CreateRadarTriangle((int)x, (int)y, (int)idx);
-				Thread.Sleep(this._updateRate);
+				this.CreateEdgeOverlay(); // Draw bars based on current audio
+				Thread.Sleep(this._updateRate); // From config
 			}
 		}
 
 
-		// Token: 0x0600000D RID: 13 RVA: 0x00002A90 File Offset: 0x00000C90
-		private void CreateRadar(int x, int y, int idx)
+		private void CreateEdgeOverlay()
 		{
-			Graphics grp = Graphics.FromImage(this._radar);
-			if((idx % 50) == 0) { grp.FillRectangle(Brushes.Black, 0, 0, this._radar.Width, this._radar.Height); };
-			grp.FillRectangle(Brushes.Red, x - 5, y - 5, 10, 10);
-			this.RadarBox.Invoke(new MethodInvoker(delegate()
+			float threshold = 0.02f; // Minimum level to draw
+
+			var peaks = this._device.AudioMeterInformation.PeakValues;
+
+			int width = Screen.PrimaryScreen.Bounds.Width;
+			int height = Screen.PrimaryScreen.Bounds.Height;
+			int barThickness = 10;
+			int topBarWidth = width / 3;
+
+			// Create fresh overlay every frame (this clears previous content)
+			Bitmap fullOverlay = new Bitmap(width, height);
+			using (Graphics fullGrp = Graphics.FromImage(fullOverlay))
 			{
-				this.RadarBox.Image = this._radar;
+				fullGrp.Clear(Color.Transparent); // Force clearing old bars
+
+				// Channel index reference:
+				// 0: Front Left, 1: Front Right, 2: Center, 3: LFE, 4: Rear Left, 5: Rear Right, 6: Side Left, 7: Side Right
+
+				Action<int, Rectangle> drawBarIfActive = (channelIndex, rect) =>
+				{
+					if (channelIndex >= peaks.Count) return;
+
+					float value = peaks[channelIndex];
+					if (value < threshold) return; // Skip drawing if too quiet
+
+					float scaled = value * _multiplier;
+					Brush color = scaled < 0.33f ? Brushes.Green :
+								  scaled < 0.66f ? Brushes.Yellow : Brushes.Red;
+
+					fullGrp.FillRectangle(color, rect);
+				};
+
+				// FRONT LEFT – top left
+				drawBarIfActive(0, new Rectangle(0, 0, topBarWidth, barThickness));
+
+				// FRONT RIGHT – top right
+				drawBarIfActive(1, new Rectangle(topBarWidth * 2, 0, topBarWidth, barThickness));
+
+				// CENTER – top center
+				drawBarIfActive(2, new Rectangle(topBarWidth, 0, topBarWidth, barThickness));
+
+				// SIDE LEFT – full height
+				drawBarIfActive(6, new Rectangle(0, 0, barThickness, height));
+
+				// SIDE RIGHT – full height
+				drawBarIfActive(7, new Rectangle(width - barThickness, 0, barThickness, height));
+
+				// REAR LEFT – bottom left
+				drawBarIfActive(4, new Rectangle(0, height - barThickness, width / 2, barThickness));
+
+				// REAR RIGHT – bottom right
+				drawBarIfActive(5, new Rectangle(width / 2, height - barThickness, width / 2, barThickness));
+			}
+
+			// Set the rendered image to the UI
+			this.Invoke(new MethodInvoker(() =>
+			{
+				this.BackgroundImage = fullOverlay;
+				this.BackgroundImageLayout = ImageLayout.Stretch;
 			}));
 		}
 
-		private void CreateRadarTriangle(int x, int y, int idx)
-		{
-
-			Graphics grp = Graphics.FromImage(this._radar);
-
-			// Define the vertices of the this._sectionAmount triangular sections
-			Point[][] triangles = new Point[this._sectionAmount][];
-			Point center = new Point(75, 75);
-			double angleStep = 360.0 / this._sectionAmount;
-			double overlapAngle = 0; // Adjust this value to increase or decrease the overlap
-
-			for (int i = 0; i < this._sectionAmount; i++)
-			{
-				double angle1 = Math.PI / 180 * ((i * angleStep) - overlapAngle);
-				double angle2 = Math.PI / 180 * (((i + 1) * angleStep) + overlapAngle);
-
-				Point vertex1 = new Point(center.X + (int)(150 * Math.Cos(angle1)), center.Y + (int)(150 * Math.Sin(angle1)));
-				Point vertex2 = new Point(center.X + (int)(150 * Math.Cos(angle2)), center.Y + (int)(150 * Math.Sin(angle2))) ;
-
-				triangles[i] = new Point[] { center, GetIntersectionPoint(center, vertex1), GetIntersectionPoint(center, vertex2) };
-			}
-
-			for (int i = 0; i < this._sectionAmount; i++)
-			{// Draw only the inner borders of the sections
-			 // Highlight the section if it was highlighted within the last 3 seconds
-				if ((DateTime.Now - lastHighlightedTimestamps[i]).TotalSeconds > this._highlightDurationSeconds)
-				{
-					grp.FillPolygon(Brushes.Black, triangles[i]); // Fill the highlighted section
-				}
-				grp.DrawLine(Pens.MintCream, triangles[i][0], triangles[i][1]);
-				grp.DrawLine(Pens.MintCream, triangles[i][0], triangles[i][2]);
-			}
-
-			// Determine in which triangular section the red dot falls
-			int section = -1;
-			for (int i = 0; i < this._sectionAmount; i++)
-			{
-				if (IsPointInTriangle(new Point(x, y), triangles[i][0], triangles[i][1], triangles[i][2]))
-				{
-					section = i;
-					break;
-				}
-			}
-
-			// Highlight the section where the red dot if threshold is met (radius)
-			double normalized_x = (75f - x) % 75;
-			double normalized_y = (75f - y) % 75;
-			double magnitude = Math.Sqrt((normalized_x * normalized_x) + (normalized_y * normalized_y));
-			if (section != -1 && magnitude >= this._highlightSoundThreshold)  
-			{
-				grp.FillPolygon(Brushes.Green, triangles[section]); // Fill the highlighted section
-				lastHighlightedTimestamps[section] = DateTime.Now; // Save time of last highlighting
-
-			}
-
-			// Draw the red dot
-			grp.FillRectangle(Brushes.Red, x - 5, y - 5, 10, 10);
-
-			this.RadarBox.Invoke(new MethodInvoker(delegate ()
-			{
-				this.RadarBox.Image = this._radar;
-			}));
-		}
 		private Point GetIntersectionPoint(Point p1, Point p2)
 		{
 			float t;
@@ -249,9 +184,6 @@ namespace CanetisRadar
 		// Token: 0x0400000E RID: 14
 		private int _updateRate = 50;
 
-		// Amount of Triangle Slices
-		private int _sectionAmount = 12;
-
 		// Highlighting Duration in Seconds
 		private int _highlightDurationSeconds = 3;
 
@@ -262,7 +194,7 @@ namespace CanetisRadar
 		private int _delay = 5;
 
 		// Token: 0x0400000F RID: 15
-		private readonly Bitmap _radar = new Bitmap(150, 150);
+		private Bitmap _radar;
 
 		// Token: 0x04000010 RID: 16
 		public IntPtr ParentHandle;
