@@ -142,41 +142,6 @@ namespace CanetisRadar
 			}));
 		}
 
-		private Point GetIntersectionPoint(Point p1, Point p2)
-		{
-			float t;
-			if (p2.X - p1.X != 0)
-			{
-				t = Math.Min(Math.Max((-150 - p1.X) / (float)(p2.X - p1.X), (300 - p1.X) / (float)(p2.X - p1.X)), 1);
-			}
-			else
-			{
-				t = Math.Min(Math.Max((-150 - p1.Y) / (float)(p2.Y - p1.Y), (300 - p1.Y) / (float)(p2.Y - p1.Y)), 1);
-			}
-
-			return new Point((int)(p1.X + t * (p2.X - p1.X)), (int)(p1.Y + t * (p2.Y - p1.Y)));
-		}
-
-		// Method to check if a point is inside a triangle
-		private bool IsPointInTriangle(Point pt, Point v1, Point v2, Point v3)
-		{
-			float d1, d2, d3;
-			bool has_neg, has_pos;
-
-			d1 = Sign(pt, v1, v2);
-			d2 = Sign(pt, v2, v3);
-			d3 = Sign(pt, v3, v1);
-
-			has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
-			has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
-
-			return !(has_neg && has_pos);
-		}
-
-		private float Sign(Point p1, Point p2, Point p3)
-		{
-			return (p1.X - p3.X) * (p2.Y - p3.Y) - (p2.X - p3.X) * (p1.Y - p3.Y);
-		}
 		// Token: 0x0400000B RID: 11
 		private MMDeviceEnumerator _enumerator;
 
